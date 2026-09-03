@@ -17,9 +17,11 @@ expose (an internal web app, Grafana, SSH, ...). It:
    services, matched by hostname (and optionally path), the way
    cloudflared's `ingress` rule list works.
 
-This project is the client-side connector only. It expects a WireGuard
-gateway and an RFC 2136-capable DNS server to already exist on your
-network; it doesn't stand those up for you.
+This project is the client-side connector. For a repeatable gateway/client
+setup flow, use
+[`Tunneld-Provisioner`](https://github.com/Dankular/Tunneld-Provisioner) to
+generate the gateway WireGuard/BIND artifacts and the per-client
+`tunneld.yaml` files consumed by this daemon.
 
 > The ingress-rule-list shape and the "dial out, no inbound ports needed"
 > model are this project's own design, deliberately similar to
@@ -28,6 +30,61 @@ network; it doesn't stand those up for you.
 > transport (WireGuard) and DNS (RFC 2136) backends.
 
 ## Quick start
+
+### Provisioner-assisted
+
+Use the provisioner when you want one topology file to produce both gateway
+artifacts and daemon configs:
+
+```sh
+git clone https://github.com/Dankular/Tunneld-Provisioner.git
+cd Tunneld-Provisioner
+go build -o tunneld-provisioner ./cmd/tunneld-provisioner
+
+./tunneld-provisioner genkey    # gateway keypair
+./tunneld-provisioner genkey    # client keypair
+./tunneld-provisioner gentsig   # UUID TSIG key name + base64 secret
+
+cp configs/provisioner.example.yaml provisioner.yaml
+$EDITOR provisioner.yaml
+
+./tunneld-provisioner validate --config provisioner.yaml
+./tunneld-provisioner render --config provisioner.yaml --out dist
+```
+
+The rendered tree contains gateway-side files and daemon-side config:
+
+```text
+dist/
+  gateway/
+    wireguard/wg0.conf
+    bind/tunneld.keys
+    bind/tunneld-zone.conf
+  clients/
+    apphost/tunneld.yaml
+```
+
+Install `dist/gateway/wireguard/wg0.conf` on your public gateway, merge the
+BIND snippets into your authoritative DNS configuration, then copy the relevant
+`dist/clients/<name>/tunneld.yaml` onto each machine running `tunneld`.
+
+On the Windows deployment workstation used by this project, the provisioner can
+deploy itself to the gateway with:
+
+```powershell
+.\scripts\deploy.ps1
+```
+
+That wrapper validates, pushes, cross-builds, uploads, uninstalls the active
+remote provisioner install, reinstalls it, updates
+`/opt/tunneld-provisioner/current`, and runs a smoke validation. To remove the
+active provisioner install without replacing it:
+
+```powershell
+.\scripts\deploy.ps1 -UninstallOnly
+```
+
+### Manual daemon config
 
 ```sh
 go build -o tunneld ./cmd/tunneld
@@ -41,6 +98,56 @@ $EDITOR tunneld.yaml        # fill in your keys, gateway endpoint, ingress rules
 See [`configs/tunneld.example.yaml`](configs/tunneld.example.yaml) for the
 full, commented config schema, and [`systemd/tunneld.service`](systemd/tunneld.service)
 for running it as a system service.
+
+If you used the provisioner, validate and run the generated client config with
+the daemon:
+
+```sh
+tunneld validate --config dist/clients/apphost/tunneld.yaml
+tunneld run --config dist/clients/apphost/tunneld.yaml
+```
+
+## Deployment outline
+
+On the gateway, install the rendered WireGuard config and bring the interface
+up:
+
+```sh
+sudo install -m 0600 dist/gateway/wireguard/wg0.conf /etc/wireguard/wg0.conf
+sudo systemctl enable --now wg-quick@wg0
+sudo wg show wg0
+```
+
+If you use BIND for RFC 2136 updates, install the rendered TSIG key and include
+the rendered zone policy from your named configuration:
+
+```sh
+sudo install -m 0600 dist/gateway/bind/tunneld.keys /etc/bind/tunneld.keys
+sudo install -m 0644 dist/gateway/bind/tunneld-zone.conf /etc/bind/named.conf.tunneld-zone
+sudo named-checkconf
+sudo systemctl reload bind9
+```
+
+On each client host, install the daemon and the provisioner-rendered config:
+
+```sh
+sudo install -m 0755 tunneld /usr/local/bin/tunneld
+sudo install -d -m 0750 /etc/tunneld
+sudo install -m 0600 dist/clients/apphost/tunneld.yaml /etc/tunneld/tunneld.yaml
+sudo install -m 0644 systemd/tunneld.service /etc/systemd/system/tunneld.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now tunneld
+sudo journalctl -u tunneld -f
+```
+
+From the gateway, verify that the daemon completed a WireGuard handshake and
+that traffic reaches the client-side local service through the tunnel:
+
+```sh
+sudo wg show wg0
+curl -H 'Host: app.example.internal' http://10.100.0.5/
+dig @10.100.0.1 app.example.internal
+```
 
 ## Ingress rules
 
