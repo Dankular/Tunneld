@@ -1,0 +1,33 @@
+[Unit]
+Description=Tunneld - outbound WireGuard reverse tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Create this user first, and give it read access to the config
+# (tunneld.yaml embeds a WireGuard private key and, if dns.enabled, a
+# TSIG secret - keep it out of reach of other local users):
+#   useradd --system --no-create-home --shell /usr/sbin/nologin tunneld
+#   chown -R tunneld:tunneld /etc/tunneld
+#   chmod 0750 /etc/tunneld
+#   chmod 0640 /etc/tunneld/tunneld.yaml
+User=tunneld
+Group=tunneld
+ExecStart=/usr/local/bin/tunneld run --config /etc/tunneld/tunneld.yaml
+Restart=on-failure
+RestartSec=5
+
+# tunneld needs no special Linux capabilities or root: the WireGuard
+# tunnel is entirely userspace (golang.zx2c4.com/wireguard/tun/netstack,
+# no OS TUN device), so it never needs CAP_NET_ADMIN or a real network
+# interface - only outbound UDP and its own listeners inside that virtual
+# network, both ordinary unprivileged socket operations.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/etc/tunneld
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,85 @@
+# Example tunneld configuration.
+#
+# tunneld is an outbound-only reverse proxy daemon, modeled conceptually on
+# cloudflared's role (dial out, no inbound ports needed on this box) but
+# pointed at infrastructure you run yourself: a WireGuard gateway instead
+# of Cloudflare's edge, and your own DNS server (updated via RFC 2136)
+# instead of Cloudflare DNS.
+#
+# Generate this node's WireGuard keypair with `tunneld genkey`.
+# Validate this file without connecting with `tunneld validate --config tunneld.yaml`.
+
+wireguard:
+  # This node's private key (`tunneld genkey`). Keep this file's
+  # permissions at 0600 - it's a secret.
+  private_key: "REPLACE_WITH_YOUR_PRIVATE_KEY"
+
+  # This node's address inside your WireGuard network. /32 is normal for a
+  # single client - it's still routable because the gateway's peer entry
+  # for this node carries the matching allowed_ips.
+  address: "10.100.0.5/32"
+
+  # Resolvers this node's own userspace network stack uses for its own
+  # outbound lookups (not related to publishing this node's hostname -
+  # that's dns.server below). Optional.
+  dns: []
+
+  # mtu: 1420        # default
+  # listen_port: 0   # default: random source port
+
+  peer:
+    # Your gateway's WireGuard public key.
+    public_key: "REPLACE_WITH_GATEWAY_PUBLIC_KEY"
+    # Your gateway's public endpoint.
+    endpoint: "gateway.example.com:51820"
+    # Address ranges reachable through the gateway - typically at least
+    # the gateway's own address, and your DNS server's address if it's
+    # only reachable inside the tunnel.
+    allowed_ips: ["10.100.0.0/16"]
+    # Keeps NAT mappings open so the gateway can keep sending to this
+    # node even though this node made the only outbound connection.
+    persistent_keepalive: 25
+
+# Publishes this node's WireGuard address into your DNS server via RFC
+# 2136 dynamic updates (TSIG-signed), so app.example.internal resolves to
+# this node without you touching DNS by hand.
+dns:
+  enabled: true
+  server: "10.100.0.1:53"
+  zone: "example.internal."
+  tsig:
+    key_name: "tunneld-key."
+    algorithm: "hmac-sha256"
+    secret: "REPLACE_WITH_YOUR_TSIG_SECRET"
+  ttl: 60
+  refresh_interval: 5m
+  deregister_on_exit: false
+
+# Ordered ingress rules, modeled loosely on cloudflared's ingress list: the
+# first matching rule (by hostname, then optional path regex) wins; a rule
+# with no hostname is a catch-all and must be last.
+ingress:
+  - hostname: "app.example.internal"
+    service: "http://127.0.0.1:8080"
+
+  - hostname: "grafana.example.internal"
+    service: "http://127.0.0.1:3000"
+
+  - hostname: "ssh.example.internal"
+    service: "tcp://127.0.0.1:22"
+    listen_port: 2222 # port this node listens on inside the tunnel
+
+  - service: "http_status:404" # catch-all
+
+http:
+  listen_port: 80
+  tls:
+    enabled: false
+    listen_port: 443
+    certs: []
+    # - hostname: "app.example.internal"
+    #   cert_file: "/etc/tunneld/certs/app.pem"
+    #   key_file: "/etc/tunneld/certs/app-key.pem"
+
+log:
+  level: info # debug | info | warn | error
