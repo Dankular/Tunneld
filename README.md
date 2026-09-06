@@ -23,6 +23,18 @@ setup flow, use
 generate the gateway WireGuard/BIND artifacts and the per-client
 `tunneld.yaml` files consumed by this daemon.
 
+This is the reference implementation of one of four Tunneld projects, each
+in its own repo — see
+[`Tunneld-Provisioner`'s architecture doc](https://github.com/Dankular/Tunneld-Provisioner/blob/main/docs/architecture.md)
+for the full picture. In that doc's terms, this daemon is the **Internal**
+tier: a userspace network stack (see [How it works](#how-it-works)) running
+as its own long-lived process, with no OS-level privilege. Two other
+runtimes read the exact same `tunneld.yaml` and interoperate with the same
+gateway: [`Tunneld.NET`](https://github.com/Dankular/Tunneld.NET) (a C#
+port — a CLI like this one, or `Tunneld.Tunnel` embedded as a library in
+another .NET process) and a real WireGuard client that runs inside a
+browser tab with nothing installed at all.
+
 > The ingress-rule-list shape and the "dial out, no inbound ports needed"
 > model are this project's own design, deliberately similar to
 > cloudflared's for a familiar workflow - not verified against
